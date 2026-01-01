@@ -147,7 +147,58 @@ nvidia-smi || echo "Warning: nvidia-smi not found"
 echo "CUDA_HOME: $CUDA_HOME"
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-# Start vLLM server
+# Start vLLM server with mock DeepseekV2Config/DeepseekV3Config
+# Note: transformers 4.53.3 doesn't have DeepseekV2Config but vLLM tries to import it
+# We create a sitecustomize.py that injects mock classes before any imports
+# Note: --enforce-eager disables CUDAGraph optimization which can cause worker init failures
+echo "Setting up mock DeepseekV2/V3 configs for transformers 4.53.3 compatibility..."
+
+# Create a directory for our sitecustomize hack
+SITE_CUSTOMIZE_DIR="{WORK_DIR}/site_packages_patch"
+mkdir -p "$SITE_CUSTOMIZE_DIR"
+
+# Create sitecustomize.py that patches transformers on import
+cat > "$SITE_CUSTOMIZE_DIR/sitecustomize.py" << 'SITECUSTOMIZE_EOF'
+# Auto-generated: Patches transformers to add mock DeepseekV2Config/DeepseekV3Config
+# This is needed because transformers 4.53.3 doesn't have these configs but vLLM expects them
+import sys
+
+class TransformersImportHook:
+    def find_module(self, fullname, path=None):
+        if fullname == 'transformers':
+            return self
+        return None
+    
+    def load_module(self, fullname):
+        # Remove ourselves from sys.meta_path temporarily to avoid recursion
+        sys.meta_path = [h for h in sys.meta_path if not isinstance(h, TransformersImportHook)]
+        
+        # Import transformers normally
+        import importlib
+        transformers = importlib.import_module('transformers')
+        
+        # Add mock configs if they don't exist
+        if not hasattr(transformers, 'DeepseekV2Config'):
+            class MockDeepseekV2Config:
+                pass
+            transformers.DeepseekV2Config = MockDeepseekV2Config
+            
+        if not hasattr(transformers, 'DeepseekV3Config'):
+            class MockDeepseekV3Config:
+                pass
+            transformers.DeepseekV3Config = MockDeepseekV3Config
+        
+        return transformers
+
+# Install the import hook
+sys.meta_path.insert(0, TransformersImportHook())
+SITECUSTOMIZE_EOF
+
+echo "Mock configs installed at $SITE_CUSTOMIZE_DIR/sitecustomize.py"
+
+# Add our patch directory to PYTHONPATH so sitecustomize.py gets loaded
+export PYTHONPATH="$SITE_CUSTOMIZE_DIR:$PYTHONPATH"
+
 echo "Starting vLLM server..."
 vllm serve {model} \\
     --tensor-parallel-size {tensor_parallel} \\
@@ -156,6 +207,7 @@ vllm serve {model} \\
     --trust-remote-code \\
     --dtype auto \\
     --model-impl transformers \\
+    --enforce-eager \\
     {reasoning_parser}
 
 echo "Server stopped at $(date)"
@@ -203,6 +255,7 @@ def cmd_setup(args):
 
     # Install vLLM and dependencies
     # Note: Pin transformers==4.53.3 and trl==0.20.0 to avoid LossKwargs removal issue in transformers 4.54.0+
+    # Note: We use sitecustomize.py to inject mock DeepseekV2Config/V3Config so latest vLLM works with older transformers
     # See: https://github.com/sgl-project/sglang/issues/8004#issuecomment-3148397838
     print("📦 Installing vLLM and transformers (this may take a few minutes)...")
     install_cmd = f"""
@@ -210,7 +263,7 @@ def cmd_setup(args):
     pip install --upgrade pip && \
     pip install transformers==4.53.3 && \
     pip install trl==0.20.0 && \
-    pip install --upgrade vllm
+    pip install vllm==0.10.0
     """
 
     result = run_ssh_command(install_cmd, user)
