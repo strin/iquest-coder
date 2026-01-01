@@ -212,10 +212,11 @@ IQuest-Coder integrates seamlessly with [OpenHands](https://openhands.dev), an o
 **Prerequisites:**
 
 ```bash
-# Install OpenHands
-pip install openhands-ai
-# or
+# Install OpenHands (recommended)
 uv tool install openhands --python 3.12
+
+# or with pip
+pip install openhands
 ```
 
 **Usage:**
@@ -242,6 +243,39 @@ The command automatically:
 2. Sets up an SSH tunnel to the cluster
 3. Configures OpenHands with the IQuest-Coder model
 4. Launches OpenHands with recommended sampling parameters (Temperature=0.6, TopP=0.85)
+
+---
+
+## Running Multiple Claude Code Instances
+
+This repository is configured to support multiple Claude Code instances running in parallel using git worktrees. This allows you to work on different features or branches simultaneously without conflicts.
+
+### Setup
+
+The `worktrees/` directory is already configured and added to `.gitignore`. To create a new worktree:
+
+```bash
+# Create a new worktree with a new feature branch
+cd /Users/timshi/iquest-coder
+git worktree add worktrees/new-feature -b new-feature
+cd worktrees/new-feature
+claude
+```
+
+### Managing Worktrees
+
+```bash
+# List all worktrees
+git worktree list
+
+# Remove a worktree when done
+git worktree remove worktrees/feature-name
+
+# Clean up stale worktree data
+git worktree prune
+```
+
+Each worktree is a separate working directory with its own branch, allowing you to run independent Claude Code sessions for different tasks.
 
 ---
 
