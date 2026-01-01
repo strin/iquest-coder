@@ -127,10 +127,18 @@ mkdir -p $HF_HOME
 mkdir -p $HUGGINGFACE_HUB_CACHE
 mkdir -p $TRANSFORMERS_CACHE
 
+# Clear any stale model cache for this specific model (to ensure fresh config.json)
+MODEL_CACHE_DIR="models--$(echo '{model}' | sed 's/\\/--/g')"
+echo "Clearing stale cache: $HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR"
+rm -rf "$HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR" 2>/dev/null || true
+
 # Activate virtual environment if exists
 if [ -f "{WORK_DIR}/venv/bin/activate" ]; then
     source {WORK_DIR}/venv/bin/activate
 fi
+
+# Print vLLM version
+echo "vLLM version: $(vllm --version 2>/dev/null || python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo 'unknown')"
 
 # Verify CUDA is accessible
 echo "Checking CUDA environment..."
@@ -197,7 +205,7 @@ def cmd_setup(args):
     install_cmd = f"""
     source {WORK_DIR}/venv/bin/activate && \
     pip install --upgrade pip && \
-    pip install vllm>=0.7.0
+    pip install --upgrade vllm
     """
 
     result = run_ssh_command(install_cmd, user)
