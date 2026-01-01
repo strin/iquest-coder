@@ -116,6 +116,95 @@ For Thinking models with reasoning support:
 vllm serve IQuestLab/IQuest-Coder-V1-40B-Thinking --reasoning-parser qwen3 --tensor-parallel-size 8
 ```
 
+### SLURM Cluster Deployment (IQuest Lab)
+
+For deployment on SLURM clusters, we provide a CLI tool that handles job submission, monitoring, and exposes an OpenAI-compatible API.
+
+#### Installation
+
+```bash
+# Using pip
+pip install -e .
+
+# Or using uv
+uv pip install -e .
+```
+
+#### Usage
+
+```bash
+# Start serving with default settings (IQuest-Coder-V1-40B-Instruct, 8 GPUs)
+iquest-serve start
+
+# Start with specific model and settings
+iquest-serve start --model IQuestLab/IQuest-Coder-V1-40B-Thinking --thinking
+
+# Start with custom configuration
+iquest-serve start --model IQuestLab/IQuest-Coder-V1-40B-Instruct \
+    --tensor-parallel 8 \
+    --port 8000 \
+    --gpus 8
+
+# Check status and get OpenAI-compatible API endpoint
+iquest-serve status
+
+# View server logs
+iquest-serve logs
+iquest-serve logs -f  # Follow logs in real-time
+
+# Stop the server
+iquest-serve stop
+```
+
+#### API Access
+
+After starting the server, use `iquest-serve status` to get the API endpoint. Example output:
+
+```
+🌐 OpenAI-Compatible API Endpoint
+============================================
+
+Base URL: http://<NODE_IP>:8000/v1
+
+# List available models
+curl http://<NODE_IP>:8000/v1/models
+
+# Chat completion
+curl http://<NODE_IP>:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "IQuestLab/IQuest-Coder-V1-40B-Instruct",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "temperature": 0.6,
+    "top_p": 0.85
+  }'
+```
+
+**Python with OpenAI SDK:**
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://<NODE_IP>:8000/v1", api_key="none")
+response = client.chat.completions.create(
+    model="IQuestLab/IQuest-Coder-V1-40B-Instruct",
+    messages=[{"role": "user", "content": "Write a hello world in Python"}],
+    temperature=0.6,
+    top_p=0.85
+)
+print(response.choices[0].message.content)
+```
+
+**SSH Tunnel for Local Access:**
+
+```bash
+# Create SSH tunnel (run locally)
+ssh -L 8000:<NODE_IP>:8000 -N <USER>@204.12.169.136
+
+# Then access locally
+curl http://localhost:8000/v1/models
+```
+
 ---
 
 ## Limitations
