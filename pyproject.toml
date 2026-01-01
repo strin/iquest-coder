@@ -35,6 +35,9 @@ dev = [
     "pytest>=7.0",
     "ruff>=0.1.0",
 ]
+openhands = [
+    "openhands>=1.0.0",
+]
 
 [project.scripts]
 iquest-serve = "scripts.iquest_serve:main"

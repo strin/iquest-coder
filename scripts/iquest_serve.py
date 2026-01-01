@@ -505,9 +505,9 @@ def cmd_code(args):
         print("❌ OpenHands is not installed.")
         print()
         print("💡 Install OpenHands with:")
-        print("   pip install openhands-ai")
+        print("   uv tool install openhands --python 3.12  # Recommended")
         print("   # or")
-        print("   uv tool install openhands --python 3.12")
+        print("   pip install openhands")
         return 1
     
     # Build OpenHands command
