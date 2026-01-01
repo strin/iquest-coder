@@ -51,6 +51,48 @@ pip install transformers>=4.52.4
 vllm serve IQuestLab/IQuest-Coder-V1-40B-Instruct --tensor-parallel-size 8
 ```
 
+## Testing
+
+### API Endpoint Testing
+
+Use the test script to verify the vLLM API endpoint is working:
+
+```bash
+# Test with default settings (localhost:8000)
+python scripts/test_api.py
+
+# Test a specific endpoint
+python scripts/test_api.py --base-url http://10.0.0.1:8000/v1
+
+# Quick health check only
+python scripts/test_api.py --quick
+```
+
+The test script validates:
+- Server health and connectivity
+- Model listing (`/models` endpoint)
+- Chat completions (streaming and non-streaming)
+- Legacy completions endpoint
+- Code generation capability
+
+### Streaming Server Logs
+
+To monitor vLLM logs and see incoming requests:
+
+```bash
+# Stream all logs in real-time
+iquest-serve logs -f
+
+# Stream only API request logs (POST, completions, etc.)
+iquest-serve logs -f -r
+
+# View stderr logs
+iquest-serve logs -e
+
+# Show recent logs (last 100 lines)
+iquest-serve logs -n 100
+```
+
 ## Resources
 
 - [GitHub Repository](https://github.com/IQuestLab/IQuest-Coder-V1)

@@ -367,7 +367,7 @@ def cmd_status(args):
 
 
 def cmd_logs(args):
-    """Show logs from the serving job."""
+    """Show logs from the serving job, including vLLM request logs."""
     state = load_state()
     if not state.get("job_id"):
         print("❌ No active serving job found.")
@@ -376,18 +376,56 @@ def cmd_logs(args):
     job_id = state["job_id"]
     user = state.get("user", args.user)
     
-    log_file = f"{WORK_DIR}/logs/serve_{job_id}.out"
+    # Determine which log file to use
+    if args.stderr:
+        log_file = f"{WORK_DIR}/logs/serve_{job_id}.err"
+        log_type = "stderr"
+    else:
+        log_file = f"{WORK_DIR}/logs/serve_{job_id}.out"
+        log_type = "stdout"
+    
+    # Build the command based on options
+    if args.requests:
+        # Filter for request-related logs (vLLM logs requests with INFO level)
+        # Common patterns: "POST", "Received request", "completion", "generate"
+        filter_pattern = "POST\\|completion\\|Received\\|generate\\|request\\|INFO"
+        if args.follow:
+            print(f"📜 Streaming request logs for job {job_id}... (Ctrl+C to stop)")
+            print(f"   Filtering for: API requests and completions")
+            print("-" * 60)
+            cmd = f"tail -f {log_file} | grep --line-buffered -i '{filter_pattern}'"
+        else:
+            print(f"📜 Recent request logs for job {job_id} ({log_type}):")
+            print("-" * 60)
+            cmd = f"grep -i '{filter_pattern}' {log_file} | tail -n {args.lines}"
+    else:
+        if args.follow:
+            print(f"📜 Streaming {log_type} logs for job {job_id}... (Ctrl+C to stop)")
+            print("-" * 60)
+            cmd = f"tail -f {log_file}"
+        else:
+            print(f"📜 Recent {log_type} logs for job {job_id}:")
+            print("-" * 60)
+            cmd = f"tail -n {args.lines} {log_file}"
     
     if args.follow:
-        print(f"📜 Following logs for job {job_id}... (Ctrl+C to stop)")
-        run_ssh_command(f"tail -f {log_file}", user, capture=False)
+        # For streaming, we need to run without capture
+        try:
+            run_ssh_command(cmd, user, capture=False)
+        except KeyboardInterrupt:
+            print("\n👋 Stopped log streaming.")
     else:
-        print(f"📜 Recent logs for job {job_id}:")
-        print("-" * 60)
-        result = run_ssh_command(f"tail -n {args.lines} {log_file}", user)
-        print(result.stdout)
-        if result.stderr:
+        result = run_ssh_command(cmd, user)
+        if result.stdout:
+            print(result.stdout)
+        else:
+            print("(No logs matching criteria)")
+        if result.stderr and "No such file" in result.stderr:
+            print(f"⚠️  Log file not found. The job may still be starting.")
+        elif result.stderr:
             print("Errors:", result.stderr)
+    
+    return 0
 
 
 def get_endpoint_info(user: str) -> tuple[str, str, str] | None:
@@ -571,8 +609,10 @@ Examples:
   iquest-serve status
   
   # View logs
-  iquest-serve logs
-  iquest-serve logs -f  # Follow logs
+  iquest-serve logs              # Show recent logs
+  iquest-serve logs -f           # Stream logs in real-time
+  iquest-serve logs -f -r        # Stream only API request logs
+  iquest-serve logs -e           # Show stderr logs
   
   # Stop the server
   iquest-serve stop
@@ -639,17 +679,27 @@ Examples:
     status_parser = subparsers.add_parser("status", help="Show status and API endpoint")
     
     # Logs command
-    logs_parser = subparsers.add_parser("logs", help="Show logs from the serving job")
+    logs_parser = subparsers.add_parser("logs", help="Stream vLLM logs from the serving job")
     logs_parser.add_argument(
         "-f", "--follow",
         action="store_true",
-        help="Follow log output"
+        help="Stream log output in real-time (like tail -f)"
     )
     logs_parser.add_argument(
         "-n", "--lines",
         type=int,
         default=50,
         help="Number of lines to show (default: 50)"
+    )
+    logs_parser.add_argument(
+        "-e", "--stderr",
+        action="store_true",
+        help="Show stderr logs instead of stdout"
+    )
+    logs_parser.add_argument(
+        "-r", "--requests",
+        action="store_true",
+        help="Filter for API request logs (POST, completions, etc.)"
     )
     
     # Code command - Start OpenHands with IQuest-Coder
