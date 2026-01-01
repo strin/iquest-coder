@@ -510,6 +510,48 @@ def cmd_code(args):
         print("   pip install openhands")
         return 1
     
+    # Configure OpenHands settings.json for both CLI and GUI modes
+    openhands_config_dir = Path.home() / ".openhands"
+    openhands_config_dir.mkdir(parents=True, exist_ok=True)
+    settings_file = openhands_config_dir / "settings.json"
+    
+    # Build settings configuration
+    settings = {
+        "llm_model": openhands_model,
+        "llm_base_url": base_url,
+        "llm_api_key": "none",
+        "agent": "CodeActAgent",
+        "language": "en",
+        "confirmation_mode": "default"
+    }
+    
+    # Check if settings file exists and back it up if different
+    backup_created = False
+    if settings_file.exists():
+        try:
+            with open(settings_file, "r") as f:
+                existing_settings = json.load(f)
+            # Only backup if settings are different
+            if existing_settings.get("llm_model") != openhands_model or \
+               existing_settings.get("llm_base_url") != base_url:
+                backup_file = openhands_config_dir / "settings.json.backup"
+                import shutil
+                shutil.copy(settings_file, backup_file)
+                backup_created = True
+                print(f"📋 Backed up existing settings to {backup_file}")
+        except (json.JSONDecodeError, IOError):
+            pass
+    
+    # Write the new settings
+    with open(settings_file, "w") as f:
+        json.dump(settings, f, indent=2)
+    
+    print(f"⚙️  Configured OpenHands settings:")
+    print(f"   Config file: {settings_file}")
+    print(f"   Model: {openhands_model}")
+    print(f"   Base URL: {base_url}")
+    print()
+    
     # Build OpenHands command
     openhands_env = os.environ.copy()
     openhands_env["LLM_MODEL"] = openhands_model
@@ -543,6 +585,12 @@ def cmd_code(args):
     except KeyboardInterrupt:
         print()
         print("👋 OpenHands session ended.")
+    
+    # Restore backup if we created one
+    if backup_created:
+        print()
+        print(f"💡 To restore your previous settings:")
+        print(f"   cp {openhands_config_dir}/settings.json.backup {settings_file}")
     
     return 0
 
