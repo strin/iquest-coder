@@ -146,6 +146,7 @@ vllm serve {model} \\
     --host 0.0.0.0 \\
     --trust-remote-code \\
     --dtype auto \\
+    --model-impl transformers \\
     {reasoning_parser}
 
 echo "Server stopped at $(date)"

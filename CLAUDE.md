@@ -47,9 +47,14 @@ The `knowledge/` directory contains reference materials and documentation for th
 # Install transformers (recommended version)
 pip install transformers>=4.52.4
 
-# For vLLM deployment
-vllm serve IQuestLab/IQuest-Coder-V1-40B-Instruct --tensor-parallel-size 8
+# For vLLM deployment (use --model-impl transformers for custom architecture support)
+vllm serve IQuestLab/IQuest-Coder-V1-40B-Instruct \
+    --tensor-parallel-size 8 \
+    --trust-remote-code \
+    --model-impl transformers
 ```
+
+**Note:** The `--model-impl transformers` flag is required because IQuest-Coder uses a custom architecture (`IQuestCoderForCausalLM`) that isn't natively supported by vLLM. This flag tells vLLM to use the HuggingFace transformers backend, which can load the custom model code.
 
 ## SLURM Cluster Configuration
 
