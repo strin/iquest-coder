@@ -256,6 +256,7 @@ def cmd_setup(args):
     # Install vLLM and dependencies
     # Note: Pin transformers==4.53.3 and trl==0.20.0 to avoid LossKwargs removal issue in transformers 4.54.0+
     # Note: We use sitecustomize.py to inject mock DeepseekV2Config/V3Config so latest vLLM works with older transformers
+    # Note: B200 Blackwell GPUs (sm_100) require CUDA 12.8+ and latest vLLM
     # See: https://github.com/sgl-project/sglang/issues/8004#issuecomment-3148397838
     print("📦 Installing vLLM and transformers (this may take a few minutes)...")
     install_cmd = f"""
@@ -263,7 +264,7 @@ def cmd_setup(args):
     pip install --upgrade pip && \
     pip install transformers==4.53.3 && \
     pip install trl==0.20.0 && \
-    pip install vllm==0.10.0
+    pip install --upgrade vllm
     """
 
     result = run_ssh_command(install_cmd, user)
