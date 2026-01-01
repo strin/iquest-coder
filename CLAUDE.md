@@ -26,8 +26,14 @@ When using IQuest-Coder-V1-Instruct:
 iquest-coder/
 ├── README.md          # Project documentation and quickstart guide
 ├── CLAUDE.md          # This file - guidance for Claude
+├── knowledge/         # Reference materials and documentation
+│   └── IQuest_Coder_Technical_Report.pdf
 └── ...                # Additional project files
 ```
+
+## Knowledge Directory
+
+The `knowledge/` directory contains reference materials and documentation for the project. This includes technical reports, papers, and other resources that provide context for working with IQuest-Coder.
 
 ## Development Guidelines
 
