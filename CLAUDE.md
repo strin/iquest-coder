@@ -28,6 +28,13 @@ iquest-coder/
 ├── CLAUDE.md          # This file - guidance for Claude
 ├── knowledge/         # Reference materials and documentation
 │   └── IQuest_Coder_Technical_Report.pdf
+├── scripts/           # Utility scripts
+│   ├── test_api.py    # API endpoint testing
+│   └── iquest_serve.py # SLURM cluster serving CLI
+├── swe-bench/         # SWE-bench evaluation framework
+│   ├── configs/       # Model configurations for SWE-agent
+│   ├── run_swe_bench.py # Evaluation script
+│   └── README.md      # SWE-bench documentation
 └── ...                # Additional project files
 ```
 
@@ -92,6 +99,33 @@ iquest-serve logs -e
 # Show recent logs (last 100 lines)
 iquest-serve logs -n 100
 ```
+
+### SWE-bench Evaluation
+
+Evaluate IQuest-Coder on the SWE-bench benchmark for real-world software engineering tasks:
+
+```bash
+# Install SWE-agent
+cd swe-bench
+pip install -r requirements.txt
+
+# Ensure vLLM server is running
+iquest-serve start
+
+# Run evaluation on SWE-bench Lite (300 instances)
+python run_swe_bench.py --dataset lite
+
+# Run on SWE-bench Verified (500 instances)
+python run_swe_bench.py --dataset verified
+
+# Use Thinking model for complex reasoning
+python run_swe_bench.py --dataset verified --model thinking
+
+# Test on a single GitHub issue
+python run_swe_bench.py --issue "scikit-learn/scikit-learn#12345"
+```
+
+For detailed documentation, see `swe-bench/README.md`.
 
 ## Resources
 

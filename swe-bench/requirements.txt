@@ -1,0 +1,16 @@
+# SWE-bench evaluation dependencies
+
+# Core SWE-agent package
+sweagent>=0.5.0
+
+# Required for config file parsing
+pyyaml>=6.0
+
+# OpenAI SDK (for API compatibility)
+openai>=1.0.0
+
+# Optional: for better terminal output
+rich>=13.0.0
+
+# Optional: for progress tracking
+tqdm>=4.65.0

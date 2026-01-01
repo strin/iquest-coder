@@ -1,0 +1,56 @@
+# SWE-agent model configuration for IQuest-Coder-V1-40B-Instruct
+#
+# This configuration uses the OpenAI-compatible vLLM endpoint served by iquest-serve.
+# Make sure the vLLM server is running before using this config.
+#
+# Usage:
+#   1. Start the vLLM server: iquest-serve start
+#   2. Get the endpoint: iquest-serve status
+#   3. Update api_base below with your endpoint URL
+#   4. Run SWE-agent with this config
+
+model:
+  # Model name in OpenAI format (provider/model_name for litellm)
+  model_name: "openai/IQuestLab/IQuest-Coder-V1-40B-Instruct"
+
+  # Model-specific parameters
+  model_kwargs:
+    # Use OpenAI provider for litellm
+    custom_llm_provider: "openai"
+
+    # Your vLLM endpoint URL - UPDATE THIS with your actual endpoint
+    # Get this from: iquest-serve status
+    # Examples:
+    #   - Local: http://localhost:8000/v1
+    #   - Remote: http://10.0.0.1:8000/v1
+    api_base: "http://localhost:8000/v1"
+
+    # API key (required by litellm but not used by vLLM)
+    api_key: "none"
+
+    # Recommended sampling parameters for IQuest-Coder-V1-Instruct
+    temperature: 0.6
+    top_p: 0.85
+
+    # Drop unsupported parameters to avoid errors
+    drop_params: true
+
+    # Empty extra_body to avoid conflicts
+    extra_body: {}
+
+  # Token limits
+  total_cost_limit: 0.0  # Not applicable for self-hosted models
+  per_instance_cost_limit: 0.0  # Disabled
+  per_instance_call_limit: 100  # Limit number of API calls per issue
+
+  # Context window (IQuest-Coder supports up to 128K)
+  context_window: 128000
+  max_tokens: 8192  # Max tokens for completion
+
+agent:
+  # Agent configuration
+  tools:
+    parse_function:
+      # Use thought_action parser if function calling is not supported
+      # Change to "function" if your model supports OpenAI function calling
+      type: "thought_action"

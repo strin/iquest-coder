@@ -1,0 +1,52 @@
+# SWE-agent model configuration for IQuest-Coder-V1-40B-Thinking
+#
+# This configuration uses the Thinking variant which includes explicit reasoning traces.
+# Make sure the vLLM server is running with the Thinking model and --reasoning-parser flag.
+#
+# Usage:
+#   1. Start the vLLM server: iquest-serve start --model IQuestLab/IQuest-Coder-V1-40B-Thinking --thinking
+#   2. Get the endpoint: iquest-serve status
+#   3. Update api_base below with your endpoint URL
+#   4. Run SWE-agent with this config
+
+model:
+  # Model name in OpenAI format (provider/model_name for litellm)
+  model_name: "openai/IQuestLab/IQuest-Coder-V1-40B-Thinking"
+
+  # Model-specific parameters
+  model_kwargs:
+    # Use OpenAI provider for litellm
+    custom_llm_provider: "openai"
+
+    # Your vLLM endpoint URL - UPDATE THIS with your actual endpoint
+    # Get this from: iquest-serve status
+    api_base: "http://localhost:8000/v1"
+
+    # API key (required by litellm but not used by vLLM)
+    api_key: "none"
+
+    # Recommended sampling parameters for IQuest-Coder-V1-Thinking
+    temperature: 0.6
+    top_p: 0.85
+
+    # Drop unsupported parameters to avoid errors
+    drop_params: true
+
+    # Empty extra_body to avoid conflicts
+    extra_body: {}
+
+  # Token limits
+  total_cost_limit: 0.0  # Not applicable for self-hosted models
+  per_instance_cost_limit: 0.0  # Disabled
+  per_instance_call_limit: 150  # Higher limit for Thinking model (more verbose)
+
+  # Context window (IQuest-Coder supports up to 128K)
+  context_window: 128000
+  max_tokens: 16384  # Higher limit for Thinking model
+
+agent:
+  # Agent configuration
+  tools:
+    parse_function:
+      # Use thought_action parser
+      type: "thought_action"
