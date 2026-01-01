@@ -93,6 +93,35 @@ iquest-serve logs -e
 iquest-serve logs -n 100
 ```
 
+## Running Multiple Claude Code Instances
+
+This repository supports multiple Claude Code instances running in parallel using git worktrees. This allows working on different features or branches simultaneously without conflicts.
+
+### Creating a Worktree
+
+```bash
+# Create a new worktree with a new feature branch
+cd /Users/timshi/iquest-coder
+git worktree add worktrees/new-feature -b new-feature
+cd worktrees/new-feature
+claude
+```
+
+### Managing Worktrees
+
+```bash
+# List all worktrees
+git worktree list
+
+# Remove a worktree when done
+git worktree remove worktrees/feature-name
+
+# Clean up stale worktree data
+git worktree prune
+```
+
+The `worktrees/` directory is in `.gitignore`. Each worktree is a separate working directory with its own branch, allowing independent Claude Code sessions for different tasks.
+
 ## Resources
 
 - [GitHub Repository](https://github.com/IQuestLab/IQuest-Coder-V1)
