@@ -145,6 +145,41 @@ git worktree prune
 
 The `worktrees/` directory is in `.gitignore`. Each worktree is a separate working directory with its own branch, allowing independent Claude Code sessions for different tasks.
 
+## Debugging Lessons
+
+### The LossKwargs Issue (2026-01-01)
+
+**Problem**: vLLM failed to start with a cryptic error about `LossKwargs` not being found when importing transformers.
+
+**Debugging Process**:
+
+1. **Tried to reproduce with a minimal example** on the SLURM cluster:
+   ```python
+   from transformers import AutoModelForCausalLM, AutoTokenizer
+   model = AutoModelForCausalLM.from_pretrained("SmallDoge/Doge-60M", trust_remote_code=True)
+   tokenizer = AutoTokenizer.from_pretrained("SmallDoge/Doge-60M")
+   inputs = tokenizer("Hello, my dog is cute", return_tensors="pt")
+   out = model.generate(**inputs, max_new_tokens=100)
+   ```
+
+2. **Found the error**: `TypeError: check_model_inputs.<locals>.wrapped_fn() got an unexpected keyword argument 'input_ids'` and later `LossKwargs` import error.
+
+3. **Researched the issue** by looking up on Hugging Face discussions:
+   - [https://huggingface.co/SmallDoge/Doge-60M/discussions/2](https://huggingface.co/SmallDoge/Doge-60M/discussions/2)
+
+4. **Root cause**: `LossKwargs` was removed in `transformers==4.54.0`. Models that relied on it broke.
+
+5. **Solution**: Pin to compatible versions:
+   ```bash
+   pip install transformers==4.53.3
+   pip install trl==0.20.0
+   ```
+
+**Key Lesson**: During debugging sessions, always:
+- ✅ **Try to reproduce with a minimal example** - isolate the problem from complex systems
+- ✅ **Search the internet for similar issues** - someone else may have hit the same problem
+- ✅ **Check changelogs and breaking changes** - version updates often remove deprecated features
+
 ## Resources
 
 - [GitHub Repository](https://github.com/IQuestLab/IQuest-Coder-V1)

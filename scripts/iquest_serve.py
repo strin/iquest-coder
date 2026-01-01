@@ -202,11 +202,14 @@ def cmd_setup(args):
         print()
 
     # Install vLLM and dependencies
+    # Note: Pin transformers==4.53.3 and trl==0.20.0 to avoid LossKwargs removal issue in transformers 4.54.0+
+    # See: https://github.com/sgl-project/sglang/issues/8004#issuecomment-3148397838
     print("📦 Installing vLLM and transformers (this may take a few minutes)...")
     install_cmd = f"""
     source {WORK_DIR}/venv/bin/activate && \
     pip install --upgrade pip && \
-    pip install --upgrade transformers && \
+    pip install transformers==4.53.3 && \
+    pip install trl==0.20.0 && \
     pip install --upgrade vllm
     """
 
