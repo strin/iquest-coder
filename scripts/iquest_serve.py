@@ -108,6 +108,16 @@ echo "{port}" >> {WORK_DIR}/current_endpoint.txt
 export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS - 1)))
 export HF_HOME=/mnt/data/.cache/huggingface
 
+# Set up CUDA environment
+export CUDA_HOME=/usr/local/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+# Load CUDA module if available (common on SLURM clusters)
+if command -v module &> /dev/null; then
+    module load cuda 2>/dev/null || true
+fi
+
 # Create cache directory if needed
 mkdir -p $HF_HOME
 
@@ -115,6 +125,12 @@ mkdir -p $HF_HOME
 if [ -f "{WORK_DIR}/venv/bin/activate" ]; then
     source {WORK_DIR}/venv/bin/activate
 fi
+
+# Verify CUDA is accessible
+echo "Checking CUDA environment..."
+nvidia-smi || echo "Warning: nvidia-smi not found"
+echo "CUDA_HOME: $CUDA_HOME"
+echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 # Start vLLM server
 echo "Starting vLLM server..."
