@@ -207,7 +207,7 @@ curl http://localhost:8000/v1/models
 
 #### OpenHands Integration
 
-IQuest-Coder integrates seamlessly with [OpenHands](https://openhands.dev), an open-source AI-powered coding assistant. The `iquest-serve code` command automatically sets up the connection and launches OpenHands.
+IQuest-Coder integrates with [OpenHands](https://openhands.dev), an open-source AI-powered coding assistant. The `iquest-serve code` command sets up the SSH tunnel and launches OpenHands.
 
 **Prerequisites:**
 
@@ -225,24 +225,30 @@ pip install openhands
 # Start OpenHands in CLI/TUI mode (default)
 iquest-serve code
 
-# Start with a specific task
-iquest-serve code -t "Create a Python REST API with FastAPI"
-
 # Start OpenHands in GUI mode (accessible at http://localhost:3000)
 iquest-serve code --mode serve
 
 # Start with current directory mounted
 iquest-serve code --mode serve --mount-cwd
-
-# Use custom generation parameters
-iquest-serve code --temperature 0.7 --top-p 0.9
 ```
+
+**Manual LLM Configuration:**
+
+When OpenHands starts, you'll need to configure the LLM settings manually:
+
+1. Click "see advanced settings" in the Settings dialog
+2. Enable the "Advanced" toggle
+3. Set the following values:
+   - **Custom Model**: `openai/IQuestLab/IQuest-Coder-V1-40B-Instruct`
+   - **Base URL**: `http://localhost:8000/v1`
+   - **API Key**: `none`
+4. Click "Save Settings"
 
 The command automatically:
 1. Retrieves the vLLM endpoint from the running SLURM job
-2. Sets up an SSH tunnel to the cluster
-3. Configures OpenHands with the IQuest-Coder model
-4. Launches OpenHands with recommended sampling parameters (Temperature=0.6, TopP=0.85)
+2. Sets up an SSH tunnel to the cluster (local port 8000)
+3. Displays the configuration values to use in OpenHands
+4. Launches OpenHands
 
 ---
 
