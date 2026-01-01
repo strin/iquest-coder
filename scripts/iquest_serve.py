@@ -147,6 +147,82 @@ echo "Server stopped at $(date)"
     return script
 
 
+def cmd_setup(args):
+    """Set up the vLLM environment on the SLURM cluster."""
+    print("🔧 Setting up vLLM environment on SLURM cluster...")
+    print()
+
+    user = args.user
+
+    # Create work directories
+    print("📁 Creating work directories...")
+    result = run_ssh_command(f"mkdir -p {WORK_DIR}/logs {WORK_DIR}/scripts", user)
+    if result.returncode != 0:
+        print(f"❌ Failed to create directories: {result.stderr}")
+        return 1
+    print("   ✅ Directories created")
+    print()
+
+    # Check if venv already exists
+    print("🔍 Checking for existing virtual environment...")
+    result = run_ssh_command(f"test -d {WORK_DIR}/venv && echo 'exists' || echo 'missing'", user)
+    venv_exists = result.stdout.strip() == "exists"
+
+    if venv_exists and not args.reinstall:
+        print(f"   ⚠️  Virtual environment already exists at {WORK_DIR}/venv")
+        print("   Use --reinstall to recreate it")
+        print()
+    else:
+        if venv_exists:
+            print(f"   🗑️  Removing existing virtual environment...")
+            run_ssh_command(f"rm -rf {WORK_DIR}/venv", user)
+
+        print("🐍 Creating virtual environment...")
+        result = run_ssh_command(f"python3 -m venv {WORK_DIR}/venv", user)
+        if result.returncode != 0:
+            print(f"❌ Failed to create virtual environment: {result.stderr}")
+            return 1
+        print("   ✅ Virtual environment created")
+        print()
+
+    # Install vLLM
+    print("📦 Installing vLLM (this may take a few minutes)...")
+    install_cmd = f"""
+    source {WORK_DIR}/venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install vllm>=0.7.0
+    """
+
+    result = run_ssh_command(install_cmd, user)
+    if result.returncode != 0:
+        print(f"❌ Failed to install vLLM: {result.stderr}")
+        return 1
+
+    print("   ✅ vLLM installed successfully")
+    print()
+
+    # Verify installation
+    print("✅ Verifying installation...")
+    result = run_ssh_command(f"source {WORK_DIR}/venv/bin/activate && vllm --version", user)
+    if result.returncode == 0:
+        version = result.stdout.strip()
+        print(f"   ✅ vLLM version: {version}")
+        print()
+        print("=" * 60)
+        print("  Setup completed successfully!")
+        print("=" * 60)
+        print()
+        print("💡 You can now start serving with:")
+        print("   iquest-serve start")
+        return 0
+    else:
+        print(f"   ⚠️  Could not verify vLLM installation: {result.stderr}")
+        print()
+        print("   You can still try to start serving with:")
+        print("   iquest-serve start")
+        return 1
+
+
 def cmd_start(args):
     """Start the vLLM serving job on SLURM."""
     print(f"🚀 Starting IQuest-Coder serving on SLURM cluster...")
@@ -156,6 +232,31 @@ def cmd_start(args):
     print(f"   Partition: {args.partition}")
     print(f"   GPUs: {args.gpus}")
     print()
+
+    # Check if vLLM is installed
+    print("🔍 Checking vLLM installation...")
+    result = run_ssh_command(f"test -f {WORK_DIR}/venv/bin/vllm && echo 'installed' || echo 'missing'", args.user)
+    vllm_installed = result.stdout.strip() == "installed"
+
+    if not vllm_installed:
+        print("   ⚠️  vLLM is not installed on the SLURM cluster")
+        print()
+        print("🔧 Running automatic setup...")
+        print()
+
+        # Run setup automatically
+        setup_result = cmd_setup(args)
+        if setup_result != 0:
+            print()
+            print("❌ Setup failed. Please run 'iquest-serve setup' manually and fix any issues.")
+            return 1
+
+        print()
+        print("✅ Setup completed! Continuing with server start...")
+        print()
+    else:
+        print("   ✅ vLLM is installed")
+        print()
 
     # Check for existing job
     state = load_state()
@@ -615,15 +716,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # First-time setup: install vLLM on SLURM cluster
+  iquest-serve setup
+
   # Start serving with default settings
   iquest-serve start
-  
+
   # Start with specific model and settings
   iquest-serve start --model IQuestLab/IQuest-Coder-V1-40B-Thinking --thinking
-  
+
   # Check status and get API endpoint
   iquest-serve status
-  
+
   # View logs
   iquest-serve logs              # Show recent logs
   iquest-serve logs -f           # Stream logs in real-time
@@ -632,13 +736,13 @@ Examples:
   
   # Stop the server
   iquest-serve stop
-  
+
   # Start OpenHands with IQuest-Coder (CLI mode - default)
   iquest-serve code
-  
+
   # Start OpenHands with a specific task
   iquest-serve code -t "Create a Python CLI tool"
-  
+
   # Start OpenHands in GUI mode
   iquest-serve code --mode serve
 """
@@ -651,7 +755,15 @@ Examples:
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
+    # Setup command
+    setup_parser = subparsers.add_parser("setup", help="Set up vLLM environment on SLURM cluster")
+    setup_parser.add_argument(
+        "--reinstall",
+        action="store_true",
+        help="Remove and recreate the virtual environment if it exists"
+    )
+
     # Start command
     start_parser = subparsers.add_parser("start", help="Start vLLM serving on SLURM")
     start_parser.add_argument(
@@ -763,8 +875,10 @@ Examples:
     if args.command is None:
         parser.print_help()
         return 1
-    
-    if args.command == "start":
+
+    if args.command == "setup":
+        return cmd_setup(args)
+    elif args.command == "start":
         return cmd_start(args)
     elif args.command == "stop":
         return cmd_stop(args)
