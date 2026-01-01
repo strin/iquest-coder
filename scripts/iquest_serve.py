@@ -147,58 +147,9 @@ nvidia-smi || echo "Warning: nvidia-smi not found"
 echo "CUDA_HOME: $CUDA_HOME"
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-# Start vLLM server with mock DeepseekV2Config/DeepseekV3Config
-# Note: transformers 4.53.3 doesn't have DeepseekV2Config but vLLM tries to import it
-# We create a sitecustomize.py that injects mock classes before any imports
+# Start vLLM server
+# Note: transformers is patched during setup to add mock DeepseekV2Config/DeepseekV3Config
 # Note: --enforce-eager disables CUDAGraph optimization which can cause worker init failures
-echo "Setting up mock DeepseekV2/V3 configs for transformers 4.53.3 compatibility..."
-
-# Create a directory for our sitecustomize hack
-SITE_CUSTOMIZE_DIR="{WORK_DIR}/site_packages_patch"
-mkdir -p "$SITE_CUSTOMIZE_DIR"
-
-# Create sitecustomize.py that patches transformers on import
-cat > "$SITE_CUSTOMIZE_DIR/sitecustomize.py" << 'SITECUSTOMIZE_EOF'
-# Auto-generated: Patches transformers to add mock DeepseekV2Config/DeepseekV3Config
-# This is needed because transformers 4.53.3 doesn't have these configs but vLLM expects them
-import sys
-
-class TransformersImportHook:
-    def find_module(self, fullname, path=None):
-        if fullname == 'transformers':
-            return self
-        return None
-    
-    def load_module(self, fullname):
-        # Remove ourselves from sys.meta_path temporarily to avoid recursion
-        sys.meta_path = [h for h in sys.meta_path if not isinstance(h, TransformersImportHook)]
-        
-        # Import transformers normally
-        import importlib
-        transformers = importlib.import_module('transformers')
-        
-        # Add mock configs if they don't exist
-        if not hasattr(transformers, 'DeepseekV2Config'):
-            class MockDeepseekV2Config:
-                pass
-            transformers.DeepseekV2Config = MockDeepseekV2Config
-            
-        if not hasattr(transformers, 'DeepseekV3Config'):
-            class MockDeepseekV3Config:
-                pass
-            transformers.DeepseekV3Config = MockDeepseekV3Config
-        
-        return transformers
-
-# Install the import hook
-sys.meta_path.insert(0, TransformersImportHook())
-SITECUSTOMIZE_EOF
-
-echo "Mock configs installed at $SITE_CUSTOMIZE_DIR/sitecustomize.py"
-
-# Add our patch directory to PYTHONPATH so sitecustomize.py gets loaded
-export PYTHONPATH="$SITE_CUSTOMIZE_DIR:$PYTHONPATH"
-
 echo "Starting vLLM server..."
 vllm serve {model} \\
     --tensor-parallel-size {tensor_parallel} \\
@@ -255,7 +206,6 @@ def cmd_setup(args):
 
     # Install vLLM and dependencies
     # Note: Pin transformers==4.53.3 and trl==0.20.0 to avoid LossKwargs removal issue in transformers 4.54.0+
-    # Note: We use sitecustomize.py to inject mock DeepseekV2Config/V3Config so latest vLLM works with older transformers
     # Note: B200 Blackwell GPUs (sm_100) require CUDA 12.8+ and latest vLLM
     # See: https://github.com/sgl-project/sglang/issues/8004#issuecomment-3148397838
     print("📦 Installing vLLM and transformers (this may take a few minutes)...")
@@ -275,26 +225,128 @@ def cmd_setup(args):
     print("   ✅ vLLM installed successfully")
     print()
 
-    # Verify installation
-    print("✅ Verifying installation...")
-    result = run_ssh_command(f"source {WORK_DIR}/venv/bin/activate && vllm --version", user)
-    if result.returncode == 0:
-        version = result.stdout.strip()
-        print(f"   ✅ vLLM version: {version}")
-        print()
+    # Run the patch
+    return run_transformers_patch(user)
+
+
+def get_transformers_patch_script() -> str:
+    """Return the Python script that patches vLLM to handle missing DeepseekV2Config/DeepseekV3Config."""
+    return '''
+import os
+import sys
+
+# Find vLLM's deepseek_v2.py file
+import vllm
+vllm_dir = os.path.dirname(vllm.__file__)
+deepseek_file = os.path.join(vllm_dir, "model_executor", "models", "deepseek_v2.py")
+
+if not os.path.exists(deepseek_file):
+    print(f"ERROR: Could not find {deepseek_file}")
+    sys.exit(1)
+
+print(f"Found vLLM deepseek_v2.py at: {deepseek_file}")
+
+with open(deepseek_file, "r") as f:
+    content = f.read()
+
+# Check if already patched
+if "# PATCHED: Mock DeepseekV2Config" in content:
+    print("vLLM deepseek_v2.py already patched")
+else:
+    # Find the problematic import line and replace it with a try/except
+    old_import = "from transformers import DeepseekV2Config, DeepseekV3Config"
+    
+    if old_import not in content:
+        print(f"WARNING: Could not find expected import line in {deepseek_file}")
+        print("The file may have a different format or already be modified")
+        sys.exit(1)
+    
+    # Create a patched version with try/except
+    new_import = """# PATCHED: Mock DeepseekV2Config/DeepseekV3Config for transformers 4.53.3 compatibility
+try:
+    from transformers import DeepseekV2Config, DeepseekV3Config
+except ImportError:
+    # Standalone mock classes - no transformers import to avoid circular dependency
+    class DeepseekV2Config:
+        model_type = "deepseek_v2"
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+    
+    class DeepseekV3Config:
+        model_type = "deepseek_v3"
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)"""
+    
+    patched_content = content.replace(old_import, new_import)
+    
+    with open(deepseek_file, "w") as f:
+        f.write(patched_content)
+    
+    print(f"Successfully patched {deepseek_file}")
+    print("Replaced direct import with try/except fallback to mock configs")
+
+print("Patch complete!")
+'''
+
+
+def run_transformers_patch(user: str) -> int:
+    """Run the transformers patch on the remote cluster.
+    
+    Returns 0 on success, 1 on failure.
+    """
+    # Patch transformers to add mock DeepseekV2Config/DeepseekV3Config
+    # This is needed because transformers 4.53.3 doesn't have these classes but vLLM expects them
+    print("🔧 Patching transformers with mock DeepseekV2Config/DeepseekV3Config...")
+    
+    patch_script = get_transformers_patch_script()
+    patch_cmd = f'''
+    source {WORK_DIR}/venv/bin/activate && python << 'PATCH_EOF'
+{patch_script}
+PATCH_EOF
+    '''
+
+    result = run_ssh_command(patch_cmd, user)
+    if result.returncode != 0:
+        print(f"⚠️  Warning: Failed to patch transformers: {result.stderr}")
+        print("   You may need to manually add DeepseekV2Config/DeepseekV3Config to transformers")
+        return 1
+    else:
+        print(f"   ✅ Transformers patched successfully")
+        if result.stdout:
+            for line in result.stdout.strip().split('\n'):
+                print(f"      {line}")
+    print()
+    return 0
+
+
+def cmd_setup_patch(args):
+    """Patch transformers with mock DeepseekV2Config/DeepseekV3Config without reinstalling."""
+    print("🔧 Patching transformers for vLLM compatibility...")
+    print()
+    
+    user = args.user
+    
+    # Check if venv exists
+    result = run_ssh_command(f"test -d {WORK_DIR}/venv && echo 'exists' || echo 'missing'", user)
+    if result.stdout.strip() != "exists":
+        print(f"❌ Virtual environment not found at {WORK_DIR}/venv")
+        print("   Run 'iquest-serve setup' first to create it.")
+        return 1
+    
+    result = run_transformers_patch(user)
+    
+    if result == 0:
         print("=" * 60)
-        print("  Setup completed successfully!")
+        print("  Patch completed successfully!")
         print("=" * 60)
         print()
         print("💡 You can now start serving with:")
         print("   iquest-serve start")
-        return 0
-    else:
-        print(f"   ⚠️  Could not verify vLLM installation: {result.stderr}")
-        print()
-        print("   You can still try to start serving with:")
-        print("   iquest-serve start")
-        return 1
+    
+    return result
+
 
 
 def cmd_start(args):
@@ -793,6 +845,9 @@ Examples:
   # First-time setup: install vLLM on SLURM cluster
   iquest-serve setup
 
+  # Patch transformers for vLLM compatibility (without reinstalling)
+  iquest-serve setup-patch
+
   # Start serving with default settings
   iquest-serve start
 
@@ -837,6 +892,9 @@ Examples:
         action="store_true",
         help="Remove and recreate the virtual environment if it exists"
     )
+
+    # Setup-patch command (just run the patch without reinstalling)
+    subparsers.add_parser("setup-patch", help="Patch transformers for vLLM compatibility (without reinstalling)")
 
     # Start command
     start_parser = subparsers.add_parser("start", help="Start vLLM serving on SLURM")
@@ -952,6 +1010,8 @@ Examples:
 
     if args.command == "setup":
         return cmd_setup(args)
+    elif args.command == "setup-patch":
+        return cmd_setup_patch(args)
     elif args.command == "start":
         return cmd_start(args)
     elif args.command == "stop":
