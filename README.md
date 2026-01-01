@@ -130,10 +130,28 @@ pip install -e .
 uv pip install -e .
 ```
 
+#### First-Time Setup
+
+The first time you run `iquest-serve start`, it will automatically set up vLLM on the SLURM cluster if it's not already installed. You can also run setup manually:
+
+```bash
+# Install vLLM on the SLURM cluster (optional - runs automatically on first start)
+iquest-serve setup
+
+# If you need to reinstall vLLM
+iquest-serve setup --reinstall
+```
+
+The setup process will:
+- Create a virtual environment on the SLURM cluster
+- Install vLLM and its dependencies
+- Verify the installation
+
 #### Usage
 
 ```bash
 # Start serving with default settings (IQuest-Coder-V1-40B-Instruct, 8 GPUs)
+# This will automatically run setup if vLLM is not installed
 iquest-serve start
 
 # Start with specific model and settings
