@@ -128,7 +128,8 @@ mkdir -p $HUGGINGFACE_HUB_CACHE
 mkdir -p $TRANSFORMERS_CACHE
 
 # Clear any stale model cache for this specific model (to ensure fresh config.json)
-MODEL_CACHE_DIR="models--$(echo '{model}' | sed 's/\\/--/g')"
+MODEL_NAME="{model}"
+MODEL_CACHE_DIR="models--${{MODEL_NAME//\\//--}}"
 echo "Clearing stale cache: $HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR"
 rm -rf "$HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR" 2>/dev/null || true
 
@@ -200,11 +201,12 @@ def cmd_setup(args):
         print("   ✅ Virtual environment created")
         print()
 
-    # Install vLLM
-    print("📦 Installing vLLM (this may take a few minutes)...")
+    # Install vLLM and dependencies
+    print("📦 Installing vLLM and transformers (this may take a few minutes)...")
     install_cmd = f"""
     source {WORK_DIR}/venv/bin/activate && \
     pip install --upgrade pip && \
+    pip install --upgrade transformers && \
     pip install --upgrade vllm
     """
 
@@ -831,8 +833,8 @@ Examples:
     logs_parser.add_argument(
         "-n", "--lines",
         type=int,
-        default=50,
-        help="Number of lines to show (default: 50)"
+        default=1000,
+        help="Number of lines to show (default: 1000)"
     )
     logs_parser.add_argument(
         "-e", "--stderr",
