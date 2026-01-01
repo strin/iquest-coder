@@ -106,7 +106,11 @@ echo "{port}" >> {WORK_DIR}/current_endpoint.txt
 
 # Set up environment
 export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS - 1)))
-export HF_HOME=/mnt/data/.cache/huggingface
+
+# Set Hugging Face cache to user-specific directory to avoid permission errors
+export HF_HOME=/mnt/data/$USER/.cache
+export HUGGINGFACE_HUB_CACHE=/mnt/data/$USER/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/data/$USER/.cache/transformers
 
 # Set up CUDA environment
 export CUDA_HOME=/usr/local/cuda
@@ -118,8 +122,10 @@ if command -v module &> /dev/null; then
     module load cuda 2>/dev/null || true
 fi
 
-# Create cache directory if needed
+# Create cache directories if needed
 mkdir -p $HF_HOME
+mkdir -p $HUGGINGFACE_HUB_CACHE
+mkdir -p $TRANSFORMERS_CACHE
 
 # Activate virtual environment if exists
 if [ -f "{WORK_DIR}/venv/bin/activate" ]; then

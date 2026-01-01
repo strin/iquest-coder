@@ -51,6 +51,24 @@ pip install transformers>=4.52.4
 vllm serve IQuestLab/IQuest-Coder-V1-40B-Instruct --tensor-parallel-size 8
 ```
 
+## SLURM Cluster Configuration
+
+### Hugging Face Cache Directory
+
+When running on SLURM with multiple users, configure Hugging Face to use a user-specific cache directory to avoid permission errors:
+
+```bash
+# Add to your ~/.bashrc or export before running commands
+export HF_HOME=/mnt/data/timshi/.cache
+export HUGGINGFACE_HUB_CACHE=/mnt/data/timshi/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/data/timshi/.cache/transformers
+```
+
+This configuration:
+- Uses the shared data filesystem (`/mnt/data`) which has 53 TB capacity
+- Prevents permission conflicts between multiple users
+- Ensures models and datasets are cached in a user-specific location
+
 ## Testing
 
 ### API Endpoint Testing
