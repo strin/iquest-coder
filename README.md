@@ -205,6 +205,44 @@ ssh -L 8000:<NODE_IP>:8000 -N <USER>@204.12.169.136
 curl http://localhost:8000/v1/models
 ```
 
+#### OpenHands Integration
+
+IQuest-Coder integrates seamlessly with [OpenHands](https://openhands.dev), an open-source AI-powered coding assistant. The `iquest-serve code` command automatically sets up the connection and launches OpenHands.
+
+**Prerequisites:**
+
+```bash
+# Install OpenHands
+pip install openhands-ai
+# or
+uv tool install openhands --python 3.12
+```
+
+**Usage:**
+
+```bash
+# Start OpenHands in CLI/TUI mode (default)
+iquest-serve code
+
+# Start with a specific task
+iquest-serve code -t "Create a Python REST API with FastAPI"
+
+# Start OpenHands in GUI mode (accessible at http://localhost:3000)
+iquest-serve code --mode serve
+
+# Start with current directory mounted
+iquest-serve code --mode serve --mount-cwd
+
+# Use custom generation parameters
+iquest-serve code --temperature 0.7 --top-p 0.9
+```
+
+The command automatically:
+1. Retrieves the vLLM endpoint from the running SLURM job
+2. Sets up an SSH tunnel to the cluster
+3. Configures OpenHands with the IQuest-Coder model
+4. Launches OpenHands with recommended sampling parameters (Temperature=0.6, TopP=0.85)
+
 ---
 
 ## Limitations

@@ -390,6 +390,163 @@ def cmd_logs(args):
             print("Errors:", result.stderr)
 
 
+def get_endpoint_info(user: str) -> tuple[str, str, str] | None:
+    """Get the current endpoint info (node_ip, port, model) from the serving state.
+    
+    Returns:
+        Tuple of (node_ip, port, model) or None if not available.
+    """
+    state = load_state()
+    if not state.get("job_id"):
+        return None
+    
+    # Try to get endpoint information
+    result = run_ssh_command(f"cat {WORK_DIR}/current_endpoint.txt 2>/dev/null", user)
+    
+    if result.returncode == 0 and result.stdout.strip():
+        lines = result.stdout.strip().split("\n")
+        if len(lines) >= 2:
+            node_ip = lines[0]
+            port = lines[1]
+            model = state.get("model", DEFAULT_MODEL)
+            return (node_ip, port, model)
+    
+    return None
+
+
+def cmd_code(args):
+    """Start OpenHands with the custom vLLM endpoint from the SLURM cluster."""
+    print("🤖 Starting OpenHands with IQuest-Coder...")
+    print()
+    
+    state = load_state()
+    if not state.get("job_id"):
+        print("❌ No active serving job found.")
+        print()
+        print("💡 Start the vLLM server first with:")
+        print("   iquest-serve start")
+        return 1
+    
+    # Get endpoint info
+    user = state.get("user", args.user)
+    endpoint_info = get_endpoint_info(user)
+    
+    if not endpoint_info:
+        print("❌ Endpoint information not available.")
+        print("   The server may still be starting up. Please wait and try again.")
+        print()
+        print("💡 Check status with:")
+        print("   iquest-serve status")
+        return 1
+    
+    node_ip, port, model = endpoint_info
+    local_port = args.local_port
+    
+    print(f"📡 Endpoint Information:")
+    print(f"   Node IP: {node_ip}")
+    print(f"   Port: {port}")
+    print(f"   Model: {model}")
+    print()
+    
+    # Set up SSH tunnel
+    print(f"🔗 Setting up SSH tunnel (local:{local_port} -> {node_ip}:{port})...")
+    
+    # Check if tunnel is already running
+    check_tunnel = subprocess.run(
+        ["lsof", "-i", f":{local_port}"],
+        capture_output=True,
+        text=True
+    )
+    
+    tunnel_process = None
+    if check_tunnel.returncode != 0:
+        # Start SSH tunnel in background
+        tunnel_cmd = [
+            "ssh",
+            "-L", f"{local_port}:{node_ip}:{port}",
+            "-N",
+            "-f",  # Go to background
+            "-o", "ExitOnForwardFailure=yes",
+            "-o", "ServerAliveInterval=60",
+            f"{user}@{SLURM_LOGIN_NODE}"
+        ]
+        
+        result = subprocess.run(tunnel_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"❌ Failed to create SSH tunnel: {result.stderr}")
+            return 1
+        
+        print(f"   ✅ SSH tunnel established")
+    else:
+        print(f"   ✅ SSH tunnel already active on port {local_port}")
+    
+    print()
+    
+    # Build base URL for OpenHands
+    base_url = f"http://localhost:{local_port}/v1"
+    
+    # OpenHands model format: for vLLM/SGLang endpoints, use "openai/<model-name>"
+    openhands_model = f"openai/{model}"
+    
+    print(f"🚀 Starting OpenHands...")
+    print(f"   Base URL: {base_url}")
+    print(f"   Model: {openhands_model}")
+    print()
+    
+    # Check if openhands is installed
+    check_openhands = subprocess.run(
+        ["which", "openhands"],
+        capture_output=True,
+        text=True
+    )
+    
+    if check_openhands.returncode != 0:
+        print("❌ OpenHands is not installed.")
+        print()
+        print("💡 Install OpenHands with:")
+        print("   pip install openhands-ai")
+        print("   # or")
+        print("   uv tool install openhands --python 3.12")
+        return 1
+    
+    # Build OpenHands command
+    openhands_env = os.environ.copy()
+    openhands_env["LLM_MODEL"] = openhands_model
+    openhands_env["LLM_BASE_URL"] = base_url
+    openhands_env["LLM_API_KEY"] = "none"  # vLLM doesn't require an API key by default
+    
+    # Additional recommended settings for IQuest-Coder
+    openhands_env["LLM_TEMPERATURE"] = str(args.temperature)
+    openhands_env["LLM_TOP_P"] = str(args.top_p)
+    
+    if args.mode == "serve":
+        print("🌐 Starting OpenHands GUI server...")
+        print("   Access at: http://localhost:3000")
+        print()
+        
+        openhands_cmd = ["openhands", "serve"]
+        if args.mount_cwd:
+            openhands_cmd.append("--mount-cwd")
+    else:
+        # CLI/TUI mode
+        print("💻 Starting OpenHands in CLI mode...")
+        print()
+        
+        openhands_cmd = ["openhands"]
+        if args.task:
+            openhands_cmd.extend(["-t", args.task])
+    
+    # Run OpenHands
+    try:
+        subprocess.run(openhands_cmd, env=openhands_env)
+    except KeyboardInterrupt:
+        print()
+        print("👋 OpenHands session ended.")
+    
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="IQuest-Coder SLURM Serving CLI",
@@ -411,6 +568,15 @@ Examples:
   
   # Stop the server
   iquest-serve stop
+  
+  # Start OpenHands with IQuest-Coder (CLI mode - default)
+  iquest-serve code
+  
+  # Start OpenHands with a specific task
+  iquest-serve code -t "Create a Python CLI tool"
+  
+  # Start OpenHands in GUI mode
+  iquest-serve code --mode serve
 """
     )
     
@@ -478,6 +644,46 @@ Examples:
         help="Number of lines to show (default: 50)"
     )
     
+    # Code command - Start OpenHands with IQuest-Coder
+    code_parser = subparsers.add_parser(
+        "code",
+        help="Start OpenHands with IQuest-Coder endpoint"
+    )
+    code_parser.add_argument(
+        "--mode",
+        choices=["cli", "serve"],
+        default="cli",
+        help="OpenHands mode: 'cli' for terminal TUI, 'serve' for GUI (default: cli)"
+    )
+    code_parser.add_argument(
+        "--local-port",
+        type=int,
+        default=8000,
+        help="Local port for SSH tunnel (default: 8000)"
+    )
+    code_parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.6,
+        help="Temperature for generation (default: 0.6, recommended for IQuest-Coder)"
+    )
+    code_parser.add_argument(
+        "--top-p",
+        type=float,
+        default=0.85,
+        dest="top_p",
+        help="Top-p for generation (default: 0.85, recommended for IQuest-Coder)"
+    )
+    code_parser.add_argument(
+        "-t", "--task",
+        help="Initial task to give to OpenHands (CLI mode only)"
+    )
+    code_parser.add_argument(
+        "--mount-cwd",
+        action="store_true",
+        help="Mount current working directory in OpenHands (serve mode only)"
+    )
+    
     args = parser.parse_args()
     
     if args.command is None:
@@ -492,6 +698,8 @@ Examples:
         return cmd_status(args)
     elif args.command == "logs":
         return cmd_logs(args)
+    elif args.command == "code":
+        return cmd_code(args)
     else:
         parser.print_help()
         return 1
