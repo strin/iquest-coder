@@ -99,3 +99,6 @@ Thumbs.db
 # Project specific
 *.log
 .iquest-serve-state.json
+
+# Git worktrees
+worktrees/
