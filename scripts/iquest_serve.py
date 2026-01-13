@@ -106,7 +106,11 @@ echo "{port}" >> {WORK_DIR}/current_endpoint.txt
 
 # Set up environment
 export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS - 1)))
-export HF_HOME=/mnt/data/.cache/huggingface
+
+# Set Hugging Face cache to user-specific directory to avoid permission errors
+export HF_HOME=/mnt/data/$USER/.cache
+export HUGGINGFACE_HUB_CACHE=/mnt/data/$USER/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/data/$USER/.cache/transformers
 
 # Set up CUDA environment
 export CUDA_HOME=/usr/local/cuda
@@ -118,13 +122,24 @@ if command -v module &> /dev/null; then
     module load cuda 2>/dev/null || true
 fi
 
-# Create cache directory if needed
+# Create cache directories if needed
 mkdir -p $HF_HOME
+mkdir -p $HUGGINGFACE_HUB_CACHE
+mkdir -p $TRANSFORMERS_CACHE
+
+# Clear any stale model cache for this specific model (to ensure fresh config.json)
+MODEL_NAME="{model}"
+MODEL_CACHE_DIR="models--${{MODEL_NAME//\\//--}}"
+echo "Clearing stale cache: $HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR"
+rm -rf "$HUGGINGFACE_HUB_CACHE/$MODEL_CACHE_DIR" 2>/dev/null || true
 
 # Activate virtual environment if exists
 if [ -f "{WORK_DIR}/venv/bin/activate" ]; then
     source {WORK_DIR}/venv/bin/activate
 fi
+
+# Print vLLM version
+echo "vLLM version: $(vllm --version 2>/dev/null || python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo 'unknown')"
 
 # Verify CUDA is accessible
 echo "Checking CUDA environment..."
@@ -133,6 +148,8 @@ echo "CUDA_HOME: $CUDA_HOME"
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 # Start vLLM server
+# Note: transformers is patched during setup to add mock DeepseekV2Config/DeepseekV3Config
+# Note: --enforce-eager disables CUDAGraph optimization which can cause worker init failures
 echo "Starting vLLM server..."
 vllm serve {model} \\
     --tensor-parallel-size {tensor_parallel} \\
@@ -140,11 +157,196 @@ vllm serve {model} \\
     --host 0.0.0.0 \\
     --trust-remote-code \\
     --dtype auto \\
+    --model-impl transformers \\
+    --enforce-eager \\
     {reasoning_parser}
 
 echo "Server stopped at $(date)"
 """
     return script
+
+
+def cmd_setup(args):
+    """Set up the vLLM environment on the SLURM cluster."""
+    print("🔧 Setting up vLLM environment on SLURM cluster...")
+    print()
+
+    user = args.user
+
+    # Create work directories
+    print("📁 Creating work directories...")
+    result = run_ssh_command(f"mkdir -p {WORK_DIR}/logs {WORK_DIR}/scripts", user)
+    if result.returncode != 0:
+        print(f"❌ Failed to create directories: {result.stderr}")
+        return 1
+    print("   ✅ Directories created")
+    print()
+
+    # Check if venv already exists
+    print("🔍 Checking for existing virtual environment...")
+    result = run_ssh_command(f"test -d {WORK_DIR}/venv && echo 'exists' || echo 'missing'", user)
+    venv_exists = result.stdout.strip() == "exists"
+
+    if venv_exists and not args.reinstall:
+        print(f"   ⚠️  Virtual environment already exists at {WORK_DIR}/venv")
+        print("   Use --reinstall to recreate it")
+        print()
+    else:
+        if venv_exists:
+            print(f"   🗑️  Removing existing virtual environment...")
+            run_ssh_command(f"rm -rf {WORK_DIR}/venv", user)
+
+        print("🐍 Creating virtual environment...")
+        result = run_ssh_command(f"python3 -m venv {WORK_DIR}/venv", user)
+        if result.returncode != 0:
+            print(f"❌ Failed to create virtual environment: {result.stderr}")
+            return 1
+        print("   ✅ Virtual environment created")
+        print()
+
+    # Install vLLM and dependencies
+    # Note: Pin transformers==4.53.3 and trl==0.20.0 to avoid LossKwargs removal issue in transformers 4.54.0+
+    # Note: B200 Blackwell GPUs (sm_100) require CUDA 12.8+ and latest vLLM
+    # See: https://github.com/sgl-project/sglang/issues/8004#issuecomment-3148397838
+    print("📦 Installing vLLM and transformers (this may take a few minutes)...")
+    install_cmd = f"""
+    source {WORK_DIR}/venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install transformers==4.53.3 && \
+    pip install trl==0.20.0 && \
+    pip install --upgrade vllm
+    """
+
+    result = run_ssh_command(install_cmd, user)
+    if result.returncode != 0:
+        print(f"❌ Failed to install vLLM: {result.stderr}")
+        return 1
+
+    print("   ✅ vLLM installed successfully")
+    print()
+
+    # Run the patch
+    return run_transformers_patch(user)
+
+
+def get_transformers_patch_script() -> str:
+    """Return the Python script that patches vLLM to handle missing DeepseekV2Config/DeepseekV3Config."""
+    return '''
+import os
+import sys
+
+# Find vLLM's deepseek_v2.py file
+import vllm
+vllm_dir = os.path.dirname(vllm.__file__)
+deepseek_file = os.path.join(vllm_dir, "model_executor", "models", "deepseek_v2.py")
+
+if not os.path.exists(deepseek_file):
+    print(f"ERROR: Could not find {deepseek_file}")
+    sys.exit(1)
+
+print(f"Found vLLM deepseek_v2.py at: {deepseek_file}")
+
+with open(deepseek_file, "r") as f:
+    content = f.read()
+
+# Check if already patched
+if "# PATCHED: Mock DeepseekV2Config" in content:
+    print("vLLM deepseek_v2.py already patched")
+else:
+    # Find the problematic import line and replace it with a try/except
+    old_import = "from transformers import DeepseekV2Config, DeepseekV3Config"
+    
+    if old_import not in content:
+        print(f"WARNING: Could not find expected import line in {deepseek_file}")
+        print("The file may have a different format or already be modified")
+        sys.exit(1)
+    
+    # Create a patched version with try/except
+    new_import = """# PATCHED: Mock DeepseekV2Config/DeepseekV3Config for transformers 4.53.3 compatibility
+try:
+    from transformers import DeepseekV2Config, DeepseekV3Config
+except ImportError:
+    # Standalone mock classes - no transformers import to avoid circular dependency
+    class DeepseekV2Config:
+        model_type = "deepseek_v2"
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+    
+    class DeepseekV3Config:
+        model_type = "deepseek_v3"
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)"""
+    
+    patched_content = content.replace(old_import, new_import)
+    
+    with open(deepseek_file, "w") as f:
+        f.write(patched_content)
+    
+    print(f"Successfully patched {deepseek_file}")
+    print("Replaced direct import with try/except fallback to mock configs")
+
+print("Patch complete!")
+'''
+
+
+def run_transformers_patch(user: str) -> int:
+    """Run the transformers patch on the remote cluster.
+    
+    Returns 0 on success, 1 on failure.
+    """
+    # Patch transformers to add mock DeepseekV2Config/DeepseekV3Config
+    # This is needed because transformers 4.53.3 doesn't have these classes but vLLM expects them
+    print("🔧 Patching transformers with mock DeepseekV2Config/DeepseekV3Config...")
+    
+    patch_script = get_transformers_patch_script()
+    patch_cmd = f'''
+    source {WORK_DIR}/venv/bin/activate && python << 'PATCH_EOF'
+{patch_script}
+PATCH_EOF
+    '''
+
+    result = run_ssh_command(patch_cmd, user)
+    if result.returncode != 0:
+        print(f"⚠️  Warning: Failed to patch transformers: {result.stderr}")
+        print("   You may need to manually add DeepseekV2Config/DeepseekV3Config to transformers")
+        return 1
+    else:
+        print(f"   ✅ Transformers patched successfully")
+        if result.stdout:
+            for line in result.stdout.strip().split('\n'):
+                print(f"      {line}")
+    print()
+    return 0
+
+
+def cmd_setup_patch(args):
+    """Patch transformers with mock DeepseekV2Config/DeepseekV3Config without reinstalling."""
+    print("🔧 Patching transformers for vLLM compatibility...")
+    print()
+    
+    user = args.user
+    
+    # Check if venv exists
+    result = run_ssh_command(f"test -d {WORK_DIR}/venv && echo 'exists' || echo 'missing'", user)
+    if result.stdout.strip() != "exists":
+        print(f"❌ Virtual environment not found at {WORK_DIR}/venv")
+        print("   Run 'iquest-serve setup' first to create it.")
+        return 1
+    
+    result = run_transformers_patch(user)
+    
+    if result == 0:
+        print("=" * 60)
+        print("  Patch completed successfully!")
+        print("=" * 60)
+        print()
+        print("💡 You can now start serving with:")
+        print("   iquest-serve start")
+    
+    return result
+
 
 
 def cmd_start(args):
@@ -156,6 +358,31 @@ def cmd_start(args):
     print(f"   Partition: {args.partition}")
     print(f"   GPUs: {args.gpus}")
     print()
+
+    # Check if vLLM is installed
+    print("🔍 Checking vLLM installation...")
+    result = run_ssh_command(f"test -f {WORK_DIR}/venv/bin/vllm && echo 'installed' || echo 'missing'", args.user)
+    vllm_installed = result.stdout.strip() == "installed"
+
+    if not vllm_installed:
+        print("   ⚠️  vLLM is not installed on the SLURM cluster")
+        print()
+        print("🔧 Running automatic setup...")
+        print()
+
+        # Run setup automatically
+        setup_result = cmd_setup(args)
+        if setup_result != 0:
+            print()
+            print("❌ Setup failed. Please run 'iquest-serve setup' manually and fix any issues.")
+            return 1
+
+        print()
+        print("✅ Setup completed! Continuing with server start...")
+        print()
+    else:
+        print("   ✅ vLLM is installed")
+        print()
 
     # Check for existing job
     state = load_state()
@@ -615,15 +842,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # First-time setup: install vLLM on SLURM cluster
+  iquest-serve setup
+
+  # Patch transformers for vLLM compatibility (without reinstalling)
+  iquest-serve setup-patch
+
   # Start serving with default settings
   iquest-serve start
-  
+
   # Start with specific model and settings
   iquest-serve start --model IQuestLab/IQuest-Coder-V1-40B-Thinking --thinking
-  
+
   # Check status and get API endpoint
   iquest-serve status
-  
+
   # View logs
   iquest-serve logs              # Show recent logs
   iquest-serve logs -f           # Stream logs in real-time
@@ -632,13 +865,13 @@ Examples:
   
   # Stop the server
   iquest-serve stop
-  
+
   # Start OpenHands with IQuest-Coder (CLI mode - default)
   iquest-serve code
-  
+
   # Start OpenHands with a specific task
   iquest-serve code -t "Create a Python CLI tool"
-  
+
   # Start OpenHands in GUI mode
   iquest-serve code --mode serve
 """
@@ -651,7 +884,18 @@ Examples:
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
+    # Setup command
+    setup_parser = subparsers.add_parser("setup", help="Set up vLLM environment on SLURM cluster")
+    setup_parser.add_argument(
+        "--reinstall",
+        action="store_true",
+        help="Remove and recreate the virtual environment if it exists"
+    )
+
+    # Setup-patch command (just run the patch without reinstalling)
+    subparsers.add_parser("setup-patch", help="Patch transformers for vLLM compatibility (without reinstalling)")
+
     # Start command
     start_parser = subparsers.add_parser("start", help="Start vLLM serving on SLURM")
     start_parser.add_argument(
@@ -704,8 +948,8 @@ Examples:
     logs_parser.add_argument(
         "-n", "--lines",
         type=int,
-        default=50,
-        help="Number of lines to show (default: 50)"
+        default=1000,
+        help="Number of lines to show (default: 1000)"
     )
     logs_parser.add_argument(
         "-e", "--stderr",
@@ -763,8 +1007,12 @@ Examples:
     if args.command is None:
         parser.print_help()
         return 1
-    
-    if args.command == "start":
+
+    if args.command == "setup":
+        return cmd_setup(args)
+    elif args.command == "setup-patch":
+        return cmd_setup_patch(args)
+    elif args.command == "start":
         return cmd_start(args)
     elif args.command == "stop":
         return cmd_stop(args)

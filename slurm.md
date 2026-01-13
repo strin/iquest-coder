@@ -26,6 +26,16 @@ Installing software packages
 sudo apt install cowsay
 You only need to run this command once on the login node as the shared filesystem is available on every node.
 
+Hugging Face Cache Configuration
+Due to multiple users on SLURM, configure Hugging Face to use a user-specific cache directory to avoid permission errors:
+
+# Add to your ~/.bashrc or export before running commands
+export HF_HOME=/mnt/data/timshi/.cache
+export HUGGINGFACE_HUB_CACHE=/mnt/data/timshi/.cache/huggingface
+export TRANSFORMERS_CACHE=/mnt/data/timshi/.cache/transformers
+
+This ensures each user has their own cache directory on the shared data filesystem, preventing permission conflicts.
+
 Cluster Monitoring
 To preview Metrics and Logs: On the left navigation menu, go to Observability tile on web UI.
 Metrics
